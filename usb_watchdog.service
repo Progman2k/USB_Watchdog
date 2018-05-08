@@ -1,0 +1,22 @@
+# This example systemd service file can be used (with proper paths)
+# to start the usb_watchdog program automatically.  I based it on
+# https://www.raspberrypi.org/forums/viewtopic.php?t=148414#p976515
+# to minimize the startup delay.
+[Unit]
+Description=USB Watchdog
+DefaultDependencies=no
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python /root/usb_watchdog.py
+
+# Give the script some time to startup
+# Frankly if it takes 300 seconds the watchdog will probably trip
+# first, but I don't want to set this low and risk systemd giving up.
+TimeoutSec=300
+
+[Install]
+WantedBy=sysinit.target
+

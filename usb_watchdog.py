@@ -1,10 +1,25 @@
 # 
 # Daniel Johnson  djohnson@progman.us   PGP 0x3CACC85B
 # https://github.com/Progman2k/USB_Watchdog
+# Licensed under the GPL v3
 # 
 # This program manages a USB connected watchdog module
+# Copyright (C) 2018 Daniel Johnson
 #
-
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#    
+#
 # Some code for kernel module management taken from
 #    https://stackoverflow.com/a/12543149
 # This program is inspired by David Gouveia's work at the following URLs:
@@ -14,7 +29,7 @@
 # We'll need this if running on Python v2.x
 from __future__ import print_function
 
-__version__ = "2018-05-05_02"
+__version__ = "2018-05-08_01"
 __author__ = "Daniel Johnson [djohnson@progman.us] PGP 0x3CACC85B"
 
 #############################################################################
@@ -56,6 +71,7 @@ try:
     if sys.version_info >= (3, 0):
         import configparser
     else:
+        # Thankfully the only important difference was capitalization
         import ConfigParser as configparser
     # Access environment variables
     import os
@@ -70,7 +86,7 @@ except Exception as e:
 
 # From http://code.activestate.com/recipes/496969-convert-string-to-hex/#c1
 # Quick way to convert a string to its hexadecimal representation.
-# Note this does not prepend "0x".
+# Note this does not prepend "0x".  Example:  toHex("Test") == '54657374'
 toHex = lambda x:"".join([hex(ord(c))[2:].zfill(2) for c in x])
 
 #############################################################################
@@ -88,6 +104,8 @@ def SendAndReceive(eout, ein, dout):
     doutpad=dout.ljust(64,chr(0))
     logging.debug("TX  0x" + toHex(doutpad))
     eout.write(doutpad)
+    # A very generous timeout value seems to avoid some very odd behaviors,
+    # especially on Windows.
     ret = ein.read(64, 2000)
     din = ''.join([chr(x) for x in ret])
     logging.debug("RX  0x" + toHex(din))
@@ -113,7 +131,7 @@ def DrainUSB(ein):
     logging.debug("Trying to drain USB device input buffer")
     try:
         for i in range(0,256):
-            tmp=ein.read(1024,10)
+            tmp = ein.read(1024,10)
             logging.debug("Drained " + len(tmp) + " bytes from USB endpoint")
     except usb.USBError:
         logging.debug("Finished attempts to drain")
@@ -123,8 +141,9 @@ def DrainUSB(ein):
 
 def usbinit(USBidVendor, USBidProduct, quiet=False):
     # Returns a tuple of Device, EndpointOut, EndpointIn
-    # It is likely (but not certain) that the values we received are Strings.
-    # Convert them to integers, which usb.core.find requires.
+    # It is likely (but not certain) that the values we received in our
+    # arguments are Strings.  Convert them to integers, which usb.core.find
+    # requires.
     if type(USBidVendor) is str:
         USBidVendor = int(USBidVendor,16)
     if type(USBidProduct) is str:
@@ -235,11 +254,13 @@ def main():
     # These are the default values if none are specified.
     # [USBWatchdog]
     # timer=180
+    # USBidVendor=0x5131
+    # USBidProduct=0x2007
     # quiet=false
     # debug=false
     config = configparser.ConfigParser()
     try:
-        config.read(["/etc/usbwatchdog.ini", "C:\\usbwatchdog.ini", os.path.normpath(os.path.expanduser("~/usbwatchdog.ini"))])
+        config.read(["/etc/usb_watchdog.ini", "C:\\usb_watchdog.ini", os.path.normpath(os.path.expanduser("~/usb_watchdog.ini"))])
         # A missing section or value will throw an error if we don't specify our 'fallback' values
         cfgtimer=config.get('USBWatchdog','timer', fallback=180)
         cfgusbidVendor=config.get('USBWatchdog','USBidVendor',fallback="0x5131")
@@ -251,24 +272,14 @@ def main():
 
     # Import values from command line arguments.  Abbreviations are
     # disabled to avoid accidentally triggering the hidden debug flag.
-    argparsedescription="Version " + __version__ + " by " + __author__ + "\nSoftware interface for a type of USB-connected hardware watchdog module."
+    argparsedescription="Version " + __version__ + " by " + __author__ + "\nSoftware interface for a type of USB-connected hardware watchdog module.\nLicensed under GPL v3"
     argparseepilog="""
 This program is inspired by David Gouveia's work at the following URLs:
   https://www.davidgouveia.net/2018/02/how-to-create-your-own-script-for-a-usb-watchdog/
   https://github.com/zatarra/usb-watchdog
 
-While the watchdog module he received presented itself as a serial device, the
-three that I bought present as USB HID's (Human Interface Devices).  This
-program does not support the (older?) Serial-over-USB models.
-
-A word of WARNING about the Timer value:
-The module itself operates on multiples of 10 seconds.  If the timer expires
-and the watchdog reboots, the timer RESTARTS without waiting for communication
-with this program.  Thus if your computer does not POST, boot, check its
-disks, and start this program within your specified time the watchdog timer
-will expire AGAIN and trigger another reboot.  If you had also connected the
-Power button pins then this second reboot may be sent as "holding down the
-button".
+This program only works with USB watchdog modules that present themselves as
+an HID (Human Interface Device).  It does not support serial-over-USB devices.
 
 If you don't specify a value this program will assume a 180 second (3 minute)
 timer value.  Unless you have tested your computer's boot time (after an
@@ -339,11 +350,11 @@ as valid packets are received.
             
             # The Windows client I observed would start by sending 128/0x80 and
             # receive 130/0x82.  Why does this not work for me here?  Using the
-            # 'Compare' function to display the return packet during testing.
-            # UPDATE: It seems to work fine with Python v2.7.5 under Linux, but
-            # fails (and creates weird issues) with Python v3.5 under Windows.
+            # 'Compare' function to display the return packet during testing...
+            # UPDATE: It seems to work fine under Linux, but fails (and creates
+            # weird issues) with Python v3.5 under Windows.
             # So is it a Python/PyUSB version problem, or an OS sensitivity?
-            # Since there is (so far) no clear benefit to sending -128/0x80
+            # Since there is (so far) no clear benefit to sending 128/0x80
             # should I even bother?
             #SendAndCompare(epout, epin, chr(128))
 
@@ -363,18 +374,18 @@ as valid packets are received.
                     if not cliargs.quiet: print("\r               ",end="")
                     HBvisual=True
                 if sys.version_info < (3, 0):
-		    sys.stdout.flush()
+                    sys.stdout.flush()
                 time.sleep(1)
         except ValueError as e:
             logging.debug("Encountered ValueError:\n"+repr(e)+"\n")
         except usb.USBError as e:
-	    etype, evalue, etraceback = sys.exc_info()
-	    #logging.debug("USBError:\n  type: " + str(etype) + "\n  value: " + str(evalue) + "\n  traceback: " + str(etraceback))
+            etype, evalue, etraceback = sys.exc_info()
+            #logging.debug("USBError:\n  type: " + str(etype) + "\n  value: " + str(evalue) + "\n  traceback: " + str(etraceback))
             if evalue.errno == errno.EACCES:
                 logging.error("Insufficient permissions to access the device.\nThis is an OS problem you must correct.")
             # Don't bother showing an error if we were still initializing
             if laststatus == State.CONNECTED:
-                logging.error("USB communication error or device removed?")
+                logging.error("USB communication error or device removed.")
                 logging.debug("Encountered USBError:\n"+repr(e)+"\n")
         # Clean up as best we can and try again
         usbcleanup()
@@ -392,7 +403,8 @@ as valid packets are received.
         #ret=SendAndReceive(epout, epin, chr(x))
         #rethex=toHex(ret)
         #retbin=bin(int(rethex,16))[2:].zfill(16)
-        #print(str(x)+"\t"+hex(x)+"\t0x"+rethex+"\t"+str(retbin))
+        #print(str(x)+"\t"+hex(x)[:4]+"\t0x"+rethex[:4])
+        ##print(str(x)+"\t"+hex(x)+"\t0x"+rethex+"\t"+str(retbin))
         #time.sleep(0.2)
 
     logging.info("Closing down")

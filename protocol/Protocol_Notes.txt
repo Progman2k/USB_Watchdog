@@ -1,0 +1,92 @@
+Packet capture was done in US Central timezone during Daylight Savings (CDT,
+UTC-5).  Capture was done in Linux with Wireshark, but the watchdog interface
+software was running in a Windows instance in a VMware Workstation virtual
+machine with the USB device passed through to it.
+
+The file "packets.pcapng" starts at 2240Z / 1740L.  These are the events:
+
+MM.SS
+=====
+40.50 - Capture starts
+41.00 - Started software "USB Watchdog V6.1.9.exe" (took 8s to load)
+        It began sending packets starting with 0x0d.
+41.10 - Changed timeout from 10 to 20 seconds (0x0d -> 0x0e)
+41.15 - Changed timeout from 20 to 30 seconds (0x0e -> 0x0f)
+41.20 - Changed timeout from 30 to 60 seconds (0x0f -> 0x12)
+41.25 - Changed timeout from 60 to 10 seconds (0x0f -> 0x10 -> 0x0d)
+41.30 - Clicked "Reset Now" button (0xff55, then back to 0x0d)
+41.40 - Closed software
+41.45 - Capture stops
+
+
+The Windows software's maximum time setting is 1270 seconds, which gives
+the value 0x8b in packets.  However values at or above 1160 seconds (0x82)
+are apparently ignored because the module's blue LED does not blink to
+acknowledge those heartbeats.
+
+Setting the time to '10 seconds' (sending 0x0d) and closing the program
+gives an actual reset time of ~127 seconds.  Setting it to '20 seconds'
+(sending 0x0e) and closing gives a time of ~136 seconds.  This leads me to
+conclude that the Windows software is buggy, adding '12' (0x0c) to its
+output values for no good reason.  The module's behavior basically matches
+what was described by David Gouveia at
+https://www.davidgouveia.net/2018/02/how-to-create-your-own-script-for-a-usb-watchdog/
+
+The Windows software sends its 64-byte data block to USB endpoint 0x02, and
+reads a 64-byte result from endpoint 0x82.  The data blocks are padded (to
+the right) with NULL bytes.  The results appear to match the sent data except
+when the software first initializes, when it transmits 0x80 and receives 0x82.
+
+Empircal testing shows that (for timing at least) only the first byte is
+relevant but the module replies with the full original string.  Sending
+0x00 causes a reset loop, only broken up by the module's internal delay
+before it starts the timer again.
+
+The module does not seem to care about the data block padding and happily
+operates with a single byte for timing, but not for forced resets.
+
+[[ Windows only! ]]
+Oddly, when the Windows application sent 0x80 it received 0x82 but when I
+send 0x80 I receive 0xc280.  Sending it with trailing junk (such as
+0x804a756e6b4a756e6b4a756e6b) gives a reply that is 0xc2 plus the original
+packet.  Could this be a form of error message?  This begins at 0x80/128
+and continues through 0xbf/191.  Starting at 0xc0/192 the return code became
+0xc380, and continues up through 0xff/255.
+
+Assuming that the Most Significant Bit is bit 0 we can state these rules for
+input bytes:
+1) As long as bit 0 is 0, bits 1-7 will be interpreted as a timer value.
+2) If bit 0 is 1, an error is returned made up of 0xC2 in the first byte
+   and the original paylod in the 2-N bytes.
+3) If both bit 0 and bit 1 are 1, the error is made up of 0xC3 in the first
+   byte and the original payload in the 2-N bytes but bit 1 in byte 2 is
+   always 0.  I presume this is due to an internal module bug in how it
+   copies the input bytes to its output buffer.
+
+Interesting exceptions to the rules:
+1) The original Windows application or my Python program in Linux can send
+   0x80 and get the response 0x82.  My Python program in Windows gets 0xc280.
+2) The original Windows application can send 0xff55 to force a reset, but
+   my Python program in Windows just gets a 0xc3 error.
+3) In fact, under Linux my Python program never gets the 0xc2 or 0xc3 error
+   replies.  0x80 gives 0x82, and 0xff gives an instant reset....  I need to
+   revisit my Windows testing.
+ 
+ 
+Using a simple circuit to light LEDs when the relay contacts close I
+observed that the sequence of events in a "lost heartbeat" condition is:
+  1) Timeout period (perhaps minus 3 seconds) expires
+  2) Reset activates for a brief time
+  3) Waits ~20 seconds, blue LED turns on
+  4) Waits through the previously set timeout period
+  5) Holds Power for ~10 seconds
+  6) Waits briefly (~1s?)
+  7) Briefly taps Power, then Reset
+Of course the expectation is that the OS and its heartbeat daemon re-start
+before step #5.  It doesn't appear to be necessary to wait for the blue LED
+to turn on before sending heartbeats to the unit.
+
+Based on this it would be dangerous to use a timeout value less than what
+boot might take with a disk check (whether fsck or chkdsk).  Of course if
+the Power wires are not connected you gain another 10-12 seconds before
+Reset is triggered again, but for large modern disks that isn't helping much.

@@ -29,13 +29,15 @@
 # We'll need this if running on Python v2.x
 from __future__ import print_function
 
-__version__ = "2018-05-08_01"
+__version__ = "2018-05-11_01"
 __author__ = "Daniel Johnson [djohnson@progman.us] PGP 0x3CACC85B"
 
 #############################################################################
 
 # Used to exit with errorcode on fatal errors
 import sys
+# Debug output
+import logging
 
 def FatalError(message=None):
     """ This displays a text message and forces the program to exit with an error. """
@@ -59,14 +61,12 @@ def FatalError(message=None):
         pass
     sys.exit(1)
 
-# With that module loaded and function declared we can give a prettier
+# With those modules loaded and function declared we can give a prettier
 # error message if any other modules are missing.
 try:
     import usb
     # Delays / sleeping between writes
     import time
-    # Debug output
-    import logging
     # Read local settings file
     if sys.version_info >= (3, 0):
         import configparser
